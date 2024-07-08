@@ -1,9 +1,9 @@
 function bmi(){
-    window.location.href="/BMI.html";
+    window.location.href="./BMI.html";
 }
 function Tdee(){
-    window.location.href="/TdeeCal.html";
+    window.location.href="./TdeeCal.html";
 }
 function Cal(){
-    window.location.href="/Calorie.html";
+    window.location.href="./Calorie.html";
 }
