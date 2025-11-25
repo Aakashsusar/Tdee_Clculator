@@ -1,0 +1,70 @@
+name: Static analysis & SonarQube
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  sonar:
+    name: Run SonarQube static analysis
+    runs-on: ubuntu-latest
+    env:
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+      SONAR_PROJECT_NAME: ${{ secrets.SONAR_PROJECT_NAME }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up JDK (SonarScanner needs Java)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Setup Node (optional)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install npm dependencies (if present)
+        run: |
+          if [ -f package.json ]; then
+            npm ci
+          else
+            echo "No package.json — skipping npm install"
+          fi
+
+      - name: Run tests (if any)
+        run: |
+          if [ -f package.json ]; then
+            npm test || echo "Tests failed or not present (continuing to Sonar analysis)"
+          else
+            echo "No tests"
+          fi
+
+      - name: Download SonarScanner CLI
+        run: |
+          SCANNER_ZIP="sonar-scanner-cli.zip"
+          SCANNER_URL="https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.8.0.2856-linux.zip"
+          curl -sSL "$SCANNER_URL" -o $SCANNER_ZIP
+          unzip -q $SCANNER_ZIP
+          mv sonar-scanner-* sonar-scanner
+          echo "$PWD/sonar-scanner/bin" >> $GITHUB_PATH
+
+      - name: Run SonarScanner
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          sonar-scanner \
+            -Dsonar.login="${{ env.SONAR_TOKEN }}" \
+            -Dsonar.host.url="${{ env.SONAR_HOST_URL }}" \
+            -Dsonar.projectKey="${{ env.SONAR_PROJECT_KEY }}" \
+            -Dsonar.projectName="${{ env.SONAR_PROJECT_NAME }}" \
+            -Dsonar.sources=. \
+            -Dsonar.sourceEncoding=UTF-8
