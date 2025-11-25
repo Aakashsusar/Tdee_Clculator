@@ -17,17 +17,26 @@ jobs:
     name: SonarCloud scan
     runs-on: ubuntu-latest
     env:
-      # these will be read from repository secrets
+      # Required SonarCloud secret (must be added in repo Settings -> Secrets)
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
-      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-      SONAR_PROJECT_NAME: ${{ secrets.SONAR_PROJECT_NAME }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # detect whether this repo uses Node (has package.json)
+      - name: Quick sanity check - ensure SONAR_TOKEN & SONAR_ORGANIZATION present
+        run: |
+          if [ -z "${SONAR_TOKEN}" ]; then
+            echo "ERROR: SONAR_TOKEN secret is not set. Add it to repo secrets (Settings → Secrets & variables → Actions)."
+            exit 1
+          fi
+          if [ -z "${SONAR_ORGANIZATION}" ]; then
+            echo "ERROR: SONAR_ORGANIZATION secret is not set. Add it to repo secrets."
+            exit 1
+          fi
+          echo "Sonar secrets found."
+
       - name: Check for package.json
         id: check_package
         run: |
@@ -43,35 +52,30 @@ jobs:
           distribution: temurin
           java-version: '11'
 
-      # only setup node if package.json exists (prevents cache/lockfile errors)
       - name: Setup Node (only if package.json exists)
         if: steps.check_package.outputs.exists == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm' # keep cache but it will only be used if package-lock.json present
+          cache: 'npm'
 
       - name: Install npm dependencies (only if package.json exists)
         if: steps.check_package.outputs.exists == 'true'
         run: |
-          # prefer npm ci when lockfile exists; fall back to npm install otherwise
           if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ] || [ -f yarn.lock ]; then
             npm ci
           else
-            echo "No lockfile found — running npm install (CI cache won't be used)."
             npm install
           fi
 
       - name: Run tests (only if package.json exists)
         if: steps.check_package.outputs.exists == 'true'
         run: |
-          # run tests if script exists, continue on failure so sonar step still runs
-          if npm run | grep -q "test"; then
-            npm test || echo "Tests failed (continuing to Sonar analysis)."
-          else
-            echo "No test script defined in package.json."
-          fi
+          npm test || echo "Tests failed (continuing to Sonar analysis)."
 
+      # ---- SonarCloud action: do NOT explicitly pass sonar.projectKey/projectName here
+      # Let the scanner read sonar-project.properties in the repo for projectKey/name,
+      # OR set SONAR_PROJECT_KEY via secrets and uncomment the alternative below.
       - name: SonarCloud scan (uses official SonarSource action)
         uses: SonarSource/sonarqube-scan-action@v6
         env:
@@ -79,46 +83,9 @@ jobs:
         with:
           args: >
             -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
-            -Dsonar.projectName="${{ secrets.SONAR_PROJECT_NAME }}"
             -Dsonar.sources=.
             -Dsonar.sourceEncoding=UTF-8
             -Dsonar.host.url=https://sonarcloud.io
 
-      # OPTIONAL: poll SonarCloud quality gate and fail CI if gate fails.
-      # Uncomment this block if you want the workflow to fail when the quality gate is not passed.
-      # Note: requires SONAR_TOKEN with permission to read the analysis/quality gate.
-      #
-      # - name: Wait for Quality Gate (optional)
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      #     SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
-      #     SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-      #   run: |
-      #     echo "Waiting for SonarCloud quality gate..."
-      #     # fetch latest analysis id for the project
-      #     analysis=$(curl -s -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/project_analyses/search?project=${SONAR_PROJECT_KEY}&ps=1")
-      #     analysisId=$(echo "$analysis" | jq -r '.analyses[0].key')
-      #     if [ -z "$analysisId" ] || [ "$analysisId" = "null" ]; then
-      #       echo "No analysis id found; skipping quality gate check."
-      #       exit 0
-      #     fi
-      #     # poll quality gate status
-      #     status="PENDING"
-      #     tries=0
-      #     while [ "$status" = "PENDING" ] && [ $tries -lt 30 ]; do
-      #       result=$(curl -s -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/qualitygates/project_status?analysisId=${analysisId}")
-      #       status=$(echo "$result" | jq -r '.projectStatus.status')
-      #       echo "Quality gate status: $status"
-      #       if [ "$status" = "PENDING" ]; then
-      #         sleep 5
-      #         tries=$((tries+1))
-      #       fi
-      #     done
-      #     if [ "$status" != "OK" ]; then
-      #       echo "Quality gate failed: $status"
-      #       exit 1
-      #     else
-      #       echo "Quality gate passed."
-      #     fi
-
+      - name: Done
+        run: echo "SonarCloud scan step finished (check SonarCloud UI for results)."
